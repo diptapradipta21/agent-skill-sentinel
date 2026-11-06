@@ -24,7 +24,10 @@ Autonomous AI coding agents and MCP toolchains routinely ingest custom prompts a
 | :--- | :--- | :--- | :--- |
 | `SKL-INJ-001` | Prompt Injection | **CRITICAL** | System constraint bypass (`ignore previous instructions`, jailbreak markers). |
 | `SKL-SH-001` | Reverse Shell | **CRITICAL** | Reverse TCP sockets, netcat pipes (`/dev/tcp`, `mkfifo`, raw socket connects). |
+| `SKL-DYN-001` | Dynamic Exec | **CRITICAL** | Arbitrary runtime evaluation (`eval()`, `exec()`, `__import__("os").system`). |
+| `SKL-OBF-001` | Obfuscation | **HIGH** | Piped shell decoding (base64 decode pipeline, xxd, openssl). |
 | `SKL-SEC-001` | Credential Leak | **CRITICAL** | Live hardcoded API keys (`ghp_`, `sk-ant-`, `sk-proj-`, SSH Private Keys). |
+| `SKL-SEC-002` | Identity Access | **CRITICAL** | SSH identity theft attempts (`id_rsa`, `id_ed25519` exfiltration). |
 | `SKL-SH-002` | Destructive Ops | **HIGH** | Recursive deletion of root/home (`rm -rf /`, disk wipe `dd`, fork bombs). |
 | `SKL-EXF-001` | Exfiltration | **HIGH** | Unauthorized webhooks (`webhook.site`, `pipedream`, `requestbin`). |
 | `SKL-ESC-001` | Sandbox Escape | **HIGH** | Sudoers tampering, unauthorized `chmod 777`, privilege escalation. |
@@ -54,7 +57,25 @@ python3 src/sentinel.py /path/to/SKILL.md
 python3 src/sentinel.py /path/to/skills/ --fail-on-high
 ```
 
-### 4. Machine-Readable JSON Output (For Agent Tooling & MCP)
+### 4. Advanced Filtering & Exclusions
+```bash
+# Filter by minimum severity (LOW, MEDIUM, HIGH, CRITICAL)
+python3 src/sentinel.py ./skills/ --min-severity HIGH
+
+# Ignore specific benign rules
+python3 src/sentinel.py ./skills/ --ignore-rule SKL-HAR-001,SKL-OBF-001
+
+# Skip extra vendor directories (automatically skips .git, node_modules, venv)
+python3 src/sentinel.py ./skills/ --exclude-dir vendor,tmp_cache
+```
+
+### 5. Self-Check & Test Suite
+Run the built-in test suite (zero external dependencies):
+```bash
+python3 tests/test_sentinel.py
+```
+
+### 6. Machine-Readable JSON Output (For Agent Tooling & MCP)
 ```bash
 python3 src/sentinel.py /path/to/skills/ --json
 ```
@@ -68,7 +89,7 @@ python3 src/sentinel.py /path/to/skills/ --json
     ║        🛡️  A G E N T   S K I L L   S E N T I N E L     ║
     ║   Zero-Token Security Guardrail for AI Agent Skills  ║
     ╚═══════════════════════════════════════════════════════╝
-    v0.1.0 · Maintainer: @diptapradipta21
+    v0.1.1 · Maintainer: @diptapradipta21
 
 [*] Scanning target: /opt/data/skills/panggung-merah
 

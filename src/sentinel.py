@@ -1,7 +1,7 @@
 """
-agent-skill-sentinel: Static & dynamic security analyzer for AI Agent SKILL.md and tools.
+agent-skill-sentinel: Static security analyzer for AI Agent SKILL.md and tools.
 Detects prompt injection, data exfiltration, destructive shell patterns, and credential leaks.
-Zero-token runtime, fast AST and regex regex engine.
+Zero-token runtime, regex-powered guardrails.
 """
 
 import os
@@ -11,9 +11,9 @@ import json
 import argparse
 from pathlib import Path
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any
+from typing import List, Dict, Set, Optional
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # ANSI Colors
 RED = "\033[91m"
@@ -24,6 +24,23 @@ MAGENTA = "\033[95m"
 CYAN = "\033[96m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
+
+SEVERITY_WEIGHTS = {
+    "LOW": 1,
+    "MEDIUM": 2,
+    "HIGH": 3,
+    "CRITICAL": 4
+}
+
+DEFAULT_EXCLUDED_DIRS = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".pytest_cache",
+    ".tox"
+}
 
 @dataclass
 class Vulnerability:
@@ -53,7 +70,7 @@ class SkillSentinelScanner:
             "id": "SKL-SH-001",
             "severity": "CRITICAL",
             "title": "Reverse Shell / Socket Connection",
-            "pattern": r"(?i)(nc\s+-[e\w]*|bash\s+-i\s+>&\s+/dev/tcp|/bin/sh\s+-i|mkfifo\s+/tmp/|python.*import\s+socket.*connect)",
+            "pattern": r"(?i)(nc\s+-[ew]{0,2}|bash\s+-i\s+>&\s+/dev/tcp|/bin/sh\s+-i|mkfifo\s+/tmp/|python.*import\s+socket.*connect)",
             "desc": "Detects payload initiating outbound reverse shell payloads to external IP/ports.",
             "remedy": "Forbid arbitrary network sockets in skill automated commands."
         },
@@ -61,11 +78,28 @@ class SkillSentinelScanner:
             "id": "SKL-SH-002",
             "severity": "HIGH",
             "title": "Destructive File Deletion / Wipe Command",
-            "pattern": r"(?i)(rm\s+-[rf]{1,2}\s+(/|\*|~|/\w+)|dd\s+if=/dev/zero|mkfs\.|:\(\)\{ :\|:& \};:)",
+            "pattern": r"(?i)(rm\s+-[rf]{1,2}\s+(/|\*|~|/\w+)|dd\s+if=/dev/zero)",
             "desc": "Detects commands that recursively delete root, home, or vital filesystems.",
             "remedy": "Isolate file deletions to explicitly specified project relative targets."
         },
-        # 3. Secret & Credential Exfiltration
+        # 3. Dynamic Execution & Obfuscation
+        {
+            "id": "SKL-DYN-001",
+            "severity": "CRITICAL",
+            "title": "Dynamic Code Evaluation",
+            "pattern": r'''(?i)(eval\s*\(|exec\s*\(|__import__\s*\(\s*['"]os['"]\s*\)\.system)''',
+            "desc": "Detects arbitrary runtime evaluation of unvalidated code strings.",
+            "remedy": "Avoid eval/exec; replace with static dispatch tables or strict AST parsers."
+        },
+        {
+            "id": "SKL-OBF-001",
+            "severity": "HIGH",
+            "title": "Obfuscated Shell Execution Pipeline",
+            "pattern": r"(?i)(base64\s+(-d|--decode)\s*\|\s*(sh|bash|zsh)|xxd\s+-r|openssl\s+enc\s+-d)",
+            "desc": "Detects piped base64 decode execution directly into shell interpreter.",
+            "remedy": "Disallow piped decode execution; inspect payload prior to execution."
+        },
+        # 4. Secret & Credential Exfiltration
         {
             "id": "SKL-SEC-001",
             "severity": "CRITICAL",
@@ -75,6 +109,14 @@ class SkillSentinelScanner:
             "remedy": "Store keys in environment variables or system secret vault, not in skill source."
         },
         {
+            "id": "SKL-SEC-002",
+            "severity": "CRITICAL",
+            "title": "SSH Identity / Private Key Access",
+            "pattern": r"(?i)(cat\s+.*id_rsa|cat\s+.*id_ed25519|\.ssh/id_rsa|\.ssh/id_ed25519)",
+            "desc": "Detects unauthorized attempts to access or exfiltrate host SSH private keys.",
+            "remedy": "Agent skills must not reference or extract host SSH private keys."
+        },
+        {
             "id": "SKL-EXF-001",
             "severity": "HIGH",
             "title": "Outbound Sensitive Data Exfiltration",
@@ -82,7 +124,7 @@ class SkillSentinelScanner:
             "desc": "Detects unvetted external HTTP calls targeting known exfiltration endpoints.",
             "remedy": "Route outbound requests only to declared internal endpoints or verified APIs."
         },
-        # 4. Privilege Escalation & Sandbox Escape
+        # 5. Privilege Escalation & Sandbox Escape
         {
             "id": "SKL-ESC-001",
             "severity": "HIGH",
@@ -91,7 +133,7 @@ class SkillSentinelScanner:
             "desc": "Attempts to escalate permissions or tamper with system sudo configurations.",
             "remedy": "AI agents should operate exclusively under non-root bounded user sandboxes."
         },
-        # 5. Environment & Context Harvesting
+        # 6. Environment & Context Harvesting
         {
             "id": "SKL-HAR-001",
             "severity": "MEDIUM",
@@ -101,6 +143,15 @@ class SkillSentinelScanner:
             "remedy": "Query specific needed keys rather than dumping whole environment dictionaries."
         }
     ]
+
+    def __init__(self,
+                 ignored_rules: Optional[Set[str]] = None,
+                 min_severity: str = "LOW",
+                 exclude_dirs: Optional[Set[str]] = None):
+        self.ignored_rules = set(r.strip().upper() for r in (ignored_rules or set()))
+        self.min_severity = min_severity.upper()
+        self.min_severity_val = SEVERITY_WEIGHTS.get(self.min_severity, 1)
+        self.exclude_dirs = DEFAULT_EXCLUDED_DIRS.union(exclude_dirs or set())
 
     def scan_file(self, filepath: str) -> List[Vulnerability]:
         """Scans a single file for known vulnerabilities."""
@@ -118,11 +169,20 @@ class SkillSentinelScanner:
 
         for idx, line in enumerate(lines, 1):
             for rule in self.PATTERNS:
+                rule_id = rule["id"].upper()
+                if rule_id in self.ignored_rules:
+                    continue
+
+                rule_severity = rule["severity"]
+                if SEVERITY_WEIGHTS.get(rule_severity, 1) < self.min_severity_val:
+                    continue
+
                 match = re.search(rule["pattern"], line)
                 if match:
+                    # ponytail: regex-only matcher skips full AST tree; add when grammar-aware multi-line taint analysis is required.
                     vulns.append(Vulnerability(
                         rule_id=rule["id"],
-                        severity=rule["severity"],
+                        severity=rule_severity,
                         title=rule["title"],
                         description=rule["desc"],
                         line_number=idx,
@@ -137,8 +197,11 @@ class SkillSentinelScanner:
         results = {}
         target_extensions = {".md", ".py", ".sh", ".bash", ".js", ".ts", ".json", ".yaml", ".yml"}
         
-        for root, _, files in os.walk(dirpath):
-            for file in files:
+        for root, dirs, files in os.walk(dirpath):
+            # Prune excluded directories in-place for fast traversal
+            dirs[:] = [d for d in dirs if d not in self.exclude_dirs]
+
+            for file in sorted(files):
                 ext = Path(file).suffix.lower()
                 if ext in target_extensions:
                     full_path = os.path.join(root, file)
@@ -163,10 +226,21 @@ def main():
     parser.add_argument("target", help="Path to file or directory containing skills (e.g., SKILL.md or skills folder)")
     parser.add_argument("--json", action="store_true", help="Output results in machine-readable JSON format")
     parser.add_argument("--fail-on-high", action="store_true", help="Exit with non-zero code if CRITICAL or HIGH vulnerabilities are detected (CI/CD guardrail)")
+    parser.add_argument("--min-severity", choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"], default="LOW", help="Filter findings by minimum severity (default: LOW)")
+    parser.add_argument("--ignore-rule", default="", help="Comma-separated list of rule IDs to ignore (e.g., SKL-HAR-001,SKL-OBF-001)")
+    parser.add_argument("--exclude-dir", default="", help="Comma-separated extra directory names to skip during scan")
 
     args = parser.parse_args()
 
-    scanner = SkillSentinelScanner()
+    ignored_rules = set(r.strip() for r in args.ignore_rule.split(",") if r.strip())
+    extra_excludes = set(e.strip() for e in args.exclude_dir.split(",") if e.strip())
+
+    scanner = SkillSentinelScanner(
+        ignored_rules=ignored_rules,
+        min_severity=args.min_severity,
+        exclude_dirs=extra_excludes
+    )
+
     target_path = os.path.abspath(args.target)
 
     if not os.path.exists(target_path):
@@ -193,6 +267,7 @@ def main():
         }
         print(json.dumps({
             "target": target_path,
+            "version": __version__,
             "total_findings": total_findings,
             "critical": critical_count,
             "high": high_count,

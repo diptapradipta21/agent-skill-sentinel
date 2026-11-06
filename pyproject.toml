@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-skill-sentinel"
-version = "0.1.0"
+version = "0.1.1"
 description = "Zero-token static security scanner & prompt injection detector for AI Agent skills and MCP tools."
 readme = "README.md"
 requires-python = ">=3.9"
