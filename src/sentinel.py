@@ -13,7 +13,7 @@ from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Set, Optional
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 # ANSI Colors
 RED = "\033[91m"
@@ -211,6 +211,19 @@ class SkillSentinelScanner:
                         
         return results
 
+def collect_findings(scanner, targets):
+    """Scan a mix of files and directories in one pass. Returns {path: [Vulnerability]}."""
+    results = {}
+    for target in targets:
+        if os.path.isfile(target):
+            vulns = scanner.scan_file(target)
+            if vulns:
+                results[target] = vulns
+        else:
+            results.update(scanner.scan_directory(target))
+    return results
+
+
 def print_banner():
     banner = f"""{CYAN}{BOLD}
     ╔═══════════════════════════════════════════════════════╗
@@ -223,7 +236,8 @@ def print_banner():
 
 def main():
     parser = argparse.ArgumentParser(description="Scan AI agent skills and tools for prompt injections, leaks, and malicious execution.")
-    parser.add_argument("target", help="Path to file or directory containing skills (e.g., SKILL.md or skills folder)")
+    parser.add_argument("target", nargs="+", metavar="TARGET", help="One or more files or directories to scan (e.g., SKILL.md skills/ plugins/)")
+    parser.add_argument("--version", action="version", version="%(prog)s " + __version__)
     parser.add_argument("--json", action="store_true", help="Output results in machine-readable JSON format")
     parser.add_argument("--fail-on-high", action="store_true", help="Exit with non-zero code if CRITICAL or HIGH vulnerabilities are detected (CI/CD guardrail)")
     parser.add_argument("--min-severity", choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"], default="LOW", help="Filter findings by minimum severity (default: LOW)")
@@ -241,20 +255,21 @@ def main():
         exclude_dirs=extra_excludes
     )
 
-    target_path = os.path.abspath(args.target)
+    target_paths = [os.path.abspath(t) for t in args.target]
 
-    if not os.path.exists(target_path):
-        print(f"{RED}Error: Target path '{target_path}' does not exist.{RESET}", file=sys.stderr)
+    missing = [t for t in target_paths if not os.path.exists(t)]
+    if missing:
+        for t in missing:
+            print(f"{RED}Error: Target path not found: {t}{RESET}", file=sys.stderr)
         sys.exit(1)
 
     if not args.json:
         print_banner()
-        print(f"[*] Scanning target: {BOLD}{target_path}{RESET}\n")
+        for t in target_paths:
+            print(f"[*] Scanning target: {BOLD}{t}{RESET}")
+        print()
 
-    if os.path.isfile(target_path):
-        results = {target_path: scanner.scan_file(target_path)} if scanner.scan_file(target_path) else {}
-    else:
-        results = scanner.scan_directory(target_path)
+    results = collect_findings(scanner, target_paths)
 
     total_findings = sum(len(v) for v in results.values())
     critical_count = sum(1 for vlist in results.values() for v in vlist if v.severity == "CRITICAL")
@@ -266,7 +281,8 @@ def main():
             for f, vlist in results.items()
         }
         print(json.dumps({
-            "target": target_path,
+            "target": target_paths[0],
+            "targets": target_paths,
             "version": __version__,
             "total_findings": total_findings,
             "critical": critical_count,

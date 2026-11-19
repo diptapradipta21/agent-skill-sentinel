@@ -57,7 +57,16 @@ python3 src/sentinel.py /path/to/SKILL.md
 python3 src/sentinel.py /path/to/skills/ --fail-on-high
 ```
 
-### 4. Advanced Filtering & Exclusions
+### 4. Scan Multiple Targets In One Pass
+```bash
+# Files and directories mix freely; findings merge into one report
+python3 src/sentinel.py ./skills/ ./plugins/ ./SKILL.md --fail-on-high --json
+
+# Print the scanner version (handy for pinning CI images)
+python3 src/sentinel.py --version
+```
+
+### 5. Advanced Filtering & Exclusions
 ```bash
 # Filter by minimum severity (LOW, MEDIUM, HIGH, CRITICAL)
 python3 src/sentinel.py ./skills/ --min-severity HIGH
@@ -69,13 +78,13 @@ python3 src/sentinel.py ./skills/ --ignore-rule SKL-HAR-001,SKL-OBF-001
 python3 src/sentinel.py ./skills/ --exclude-dir vendor,tmp_cache
 ```
 
-### 5. Self-Check & Test Suite
+### 6. Self-Check & Test Suite
 Run the built-in test suite (zero external dependencies):
 ```bash
 python3 tests/test_sentinel.py
 ```
 
-### 6. Machine-Readable JSON Output (For Agent Tooling & MCP)
+### 7. Machine-Readable JSON Output (For Agent Tooling and MCP)
 ```bash
 python3 src/sentinel.py /path/to/skills/ --json
 ```
@@ -89,7 +98,7 @@ python3 src/sentinel.py /path/to/skills/ --json
     ║        🛡️  A G E N T   S K I L L   S E N T I N E L     ║
     ║   Zero-Token Security Guardrail for AI Agent Skills  ║
     ╚═══════════════════════════════════════════════════════╝
-    v0.1.1 · Maintainer: @diptapradipta21
+    v0.2.0 · Maintainer: @diptapradipta21
 
 [*] Scanning target: /opt/data/skills/panggung-merah
 
